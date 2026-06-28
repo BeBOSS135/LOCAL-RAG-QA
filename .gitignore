@@ -1,0 +1,16 @@
+# Source documents — keep these OUT of the repo (may be copyrighted). A sample is
+# tracked so the project runs out of the box; everything else under data/ is ignored.
+data/*
+!data/sample.md
+
+# Derived index (embeddings of your documents) and its manifest
+chroma_db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs / temp
+*.log
+*.log.err
