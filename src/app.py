@@ -1,12 +1,12 @@
-"""Streamlit demo UI for the RAG system. Run: streamlit run app.py"""
+#UI
 import streamlit as st
 
 import config
 import llm
 from rag import retrieve
 
-st.set_page_config(page_title="RAG Q&A", page_icon="📚", layout="centered")
-st.title("📚 RAG Question-Answering")
+st.set_page_config(page_title="RAG Q&A", layout="centered")
+st.title("RAG Question-Answering")
 st.caption("Local • bge embeddings • Chroma • bge re-ranker • OCR • Mistral 7B")
 
 # Settings live in the sidebar so the pipeline can be tuned per query
@@ -31,14 +31,14 @@ if question:
                      use_rewrite=use_rewrite, retrieve_n=retrieve_n)
 
     if r["rewrites"]:
-        with st.expander(f"🔁 Also searched these {len(r['rewrites'])} rephrasings"):
+        with st.expander(f" Also searched these {len(r['rewrites'])} rephrasings"):
             for rw in r["rewrites"]:
                 st.markdown(f"- {rw}")
 
     st.markdown("### Answer")
     st.write_stream(llm.generate_stream(question, r["blocks"]))  # tokens as generated
 
-    st.caption(f"⏱ retrieval {r['retrieve_s']}s • {r['retrieval']}"
+    st.caption(f" retrieval {r['retrieve_s']}s • {r['retrieval']}"
                f"{' • re-ranked' if r['reranked'] else ''}")
 
     st.markdown("### Sources")
@@ -48,5 +48,5 @@ if question:
             if s["rerank_score"] is not None
             else f"similarity {s['score']}"
         )
-        with st.expander(f"📄 {s['source']}  —  {score}"):
+        with st.expander(f" {s['source']}  —  {score}"):
             st.write(s["text"])
