@@ -13,7 +13,7 @@ Query (per ask):   question ──> [rewrite] ──> embed ──> hybrid retri
 ```
 
 Framework-light by design — each pipeline step is a small, readable module rather
-than hidden behind LangChain, so every stage is inspectable.
+than hidden behind LangChain, so every stage is inspectable. All modules live in `src/`.
 
 | Step | Module | Tool |
 |------|--------|------|
@@ -27,7 +27,7 @@ than hidden behind LangChain, so every stage is inspectable.
 | Orchestrate | `rag.py` | `retrieve()` + `answer()` |
 | Evaluate | `evaluate.py` | retrieval metrics + LLM-judge faithfulness |
 
-Every stage is toggleable in `config.py` and per-query via `rag.retrieve(...)` /
+Every stage is toggleable in `src/config.py` and per-query via `rag.retrieve(...)` /
 the Streamlit sidebar.
 
 ## What you need running
@@ -37,8 +37,9 @@ Two independent pieces:
 1. **Ollama** — the local LLM server. Installs as a Windows app that auto-starts in
    the tray and listens on `localhost:11434`. Check with `ollama list`; it must have
    the `mistral` model (`ollama pull mistral` once).
-2. **The Python env `rag`** — conda env at `%USERPROFILE%\miniconda3\envs\rag` with
-   all dependencies (torch+CUDA, sentence-transformers, chromadb, PyMuPDF, EasyOCR…).
+2. **A Python environment with the dependencies installed** — torch+CUDA,
+   sentence-transformers, chromadb, PyMuPDF, EasyOCR, etc. See [Setup](#setup) below;
+   a conda env named `rag` is assumed by the launcher but any environment works.
 
 Models (bge embedder/reranker, EasyOCR weights) download themselves on first use and
 are cached. Everything after that is offline.
@@ -52,10 +53,9 @@ started it) are tied to the window via a Job Object, so no manual cleanup is nee
 Ctrl+C also unloads the model from VRAM. (`start.bat` just runs `run.ps1` with the
 execution policy relaxed.)
 
-For manual control, the commands below run from the project folder
-(`%USERPROFILE%\Desktop\RAG`). Activate the env first with `conda activate rag` (from an
-Anaconda Prompt), or call the env's Python directly:
-`%USERPROFILE%\miniconda3\envs\rag\python.exe`.
+For manual control, the commands below run from the project root (the cloned repo
+folder). Activate your environment first (e.g. `conda activate rag` from an Anaconda
+Prompt), or call that env's Python directly.
 
 ```powershell
 # --- START THE UI ---
@@ -84,23 +84,33 @@ Notes:
 - The UI keeps the embed/re-rank models warm; the **first** query after a fresh start
   is slower (models load into VRAM), then it's fast and the answer streams live.
 
-## Setup (already done on this machine)
+## Setup
+
+One-time, on a fresh machine:
 
 ```powershell
+git clone https://github.com/BeBOSS135/LOCAL-RAG-QA.git
+cd LOCAL-RAG-QA
+
 conda create -n rag python=3.10 -y
 conda activate rag
-pip install torch --index-url https://download.pytorch.org/whl/cu121   # CUDA build
+pip install torch --index-url https://download.pytorch.org/whl/cu121   # CUDA build (omit --index-url for CPU)
 pip install -r requirements.txt
+
 # Install Ollama from https://ollama.com/download, then:
 ollama pull mistral
 ```
 
+The model weights (bge embedder/reranker, EasyOCR) download on first run and are then
+cached; everything after that is offline.
+
 ## Usage
 
-Drop `.txt` / `.md` / `.pdf` files into `data/`, run `python src/index.py`, then ask via
-the UI or `src/query.py`. Indexing is **incremental** — a `manifest.json` content-hash
-tracks each file, so re-running after adding one document only embeds that document;
-removed files are dropped automatically.
+The repo ships one small `data/sample.md` so it runs out of the box; add your own
+`.txt` / `.md` / `.pdf` files to `data/` to index your own corpus. After changing
+`data/`, run `python src/index.py`, then ask via the UI or `src/query.py`. Indexing is
+**incremental** — a `manifest.json` content-hash tracks each file, so re-running after
+adding one document only embeds that document; removed files are dropped automatically.
 
 ## Evaluation
 
@@ -137,13 +147,13 @@ Choices that keep quality/performance solid on *any* corpus, not just the test d
 ## Known issues / gotchas (Windows)
 
 - **EasyOCR and the embedder can't share a process** (native segfault). Indexing runs
-  OCR/extraction in a **subprocess** (`ingest.py` as a worker) and embeds in the main
+  OCR/extraction in a **subprocess** (`src/ingest.py` as a worker) and embeds in the main
   process. Don't merge them.
 - **pyarrow must load before torch** or it segfaults via the sklearn→pandas import
-  chain. `config.py` pre-imports `pyarrow` at the top; keep that line.
+  chain. `src/config.py` pre-imports `pyarrow` at the top; keep that line.
 - Segfaults give no Python traceback — debug with `PYTHONFAULTHANDLER=1`.
 - **Restarting the UI:** Streamlit runs as `python.exe` (not `streamlit.exe`). To
-  fully restart, `taskkill /F /IM python.exe` **and** clear `__pycache__` — otherwise
+  fully restart, `taskkill /F /IM python.exe` **and** clear `src/__pycache__` — otherwise
   a hot-reload can keep a stale module cached and throw an `ImportError`.
 - **Launcher internals (`run.ps1`):** check service ports with a TCP probe to
   `127.0.0.1`, not `Invoke-WebRequest localhost` (cold-shell false-negatives); launch
@@ -159,7 +169,5 @@ diagrams — a separate, larger project. Everything with real text is solid.
 
 ## Tuning
 
-All knobs live in `config.py`: chunk size/overlap, top-k, candidate count, HNSW
-params, OCR threshold, embedding/reranker/LLM models, keep-alive. See
-`Project Notes/RAG_Project_Notes.md` in the Obsidian vault for the build log and the
-full decision history.
+All knobs live in `src/config.py`: chunk size/overlap, top-k, candidate count, HNSW
+params, OCR threshold, embedding/reranker/LLM models, keep-alive.
