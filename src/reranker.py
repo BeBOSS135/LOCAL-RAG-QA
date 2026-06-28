@@ -1,8 +1,7 @@
-"""Cross-encoder re-ranking. Vector search is fast but coarse; the cross-encoder
-reads (query, chunk) together for a sharper relevance score, then we keep top_k."""
+# Cross-Encoder Re-Ranking
 import config
 
-_model = None  # lazy singleton, loads once per process
+_model = None  # Lazy Singleton, Loads Once per Process
 
 
 def _get_model():
@@ -16,8 +15,8 @@ def _get_model():
     return _model
 
 
+# Re-Score Candidate Hits Against the Query, Return the Top_k
 def rerank(query: str, hits: list[dict], top_k: int = config.TOP_K) -> list[dict]:
-    """Re-score candidate hits against the query and return the top_k."""
     if not hits:
         return hits
     model = _get_model()

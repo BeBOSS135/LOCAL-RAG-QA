@@ -1,17 +1,6 @@
-"""Evaluation suite.
-
-Two layers:
-  1. Retrieval metrics (fast, no LLM) - hit-rate@k and MRR over a labeled set,
-     compared across vector / vector+rerank / hybrid+rerank to show what each
-     stage buys. This is the everyday signal while tuning.
-  2. Generation metrics (slow, --judge) - faithfulness + answer relevancy scored
-     by the local Ollama model acting as judge. Same idea as ragas, but written
-     directly so there are no heavy deps and the scoring prompt is inspectable.
-     Targets (from the project notes): faithfulness > 0.85, relevancy high.
-
-Run:  python evaluate.py            # retrieval comparison
-      python evaluate.py --judge    # + faithfulness/relevancy (slow, local LLM)
-"""
+# Evaluation - Retrieval Metrics + LLM-Judged Generation Metrics
+# Run:  python evaluate.py            # Retrieval Comparison
+#       python evaluate.py --judge    # + Faithfulness/Relevancy (Slow, Local LLM)
 import json
 import re
 import statistics
@@ -26,7 +15,7 @@ import vectorstore
 
 EVAL_SET = json.loads((config.PROJECT_ROOT / "eval_set.json").read_text(encoding="utf-8"))
 
-# Retrieval configurations to compare
+# Retrieval Configurations to Compare
 CONFIGS = {
     "vector":         dict(use_hybrid=False, use_rerank=False),
     "vector+rerank":  dict(use_hybrid=False, use_rerank=True),
@@ -34,8 +23,8 @@ CONFIGS = {
 }
 
 
+# Return the Ordered Source Filenames for a Question (No Generation)
 def _retrieve_sources(question, k, use_hybrid, use_rerank):
-    """Return the ordered source filenames for a question (no generation)."""
     q_vec = embeddings.embed_one(question)
     n = config.RETRIEVE_N if (use_hybrid or use_rerank) else k
     hits = retrieval.hybrid(question, q_vec, n) if use_hybrid else vectorstore.search(q_vec, k=n)
@@ -46,8 +35,8 @@ def _retrieve_sources(question, k, use_hybrid, use_rerank):
     return [h["source"] for h in hits]
 
 
+# 1-Based Rank of the First Source Matching Any Expected Lecture Tag, Else 0
 def _first_hit_rank(sources, expected):
-    """1-based rank of the first source matching any expected lecture tag, else 0."""
     for rank, src in enumerate(sources, start=1):
         if any(tag in src for tag in expected):
             return rank
@@ -87,12 +76,12 @@ RELEVANCY_PROMPT = (
 )
 
 
+# Ask the Local LLM for a 0-1 Score; Parse the JSON It Returns
 def _judge(client, prompt: str) -> float:
-    """Ask the local LLM for a 0-1 score; parse the JSON it returns."""
     resp = client.chat(
         model=config.OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0.0},  # deterministic grading
+        options={"temperature": 0.0},  # Deterministic Grading
     )
     text = resp["message"]["content"]
     match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -102,8 +91,8 @@ def _judge(client, prompt: str) -> float:
         return float("nan")
 
 
+# Faithfulness + Answer Relevancy, Scored by the Local LLM as Judge
 def judge_eval(k=config.TOP_K):
-    """Faithfulness + answer relevancy, scored by the local LLM as judge."""
     import ollama
 
     import rag
@@ -121,7 +110,7 @@ def judge_eval(k=config.TOP_K):
         relevs.append(r)
         print(f"  faith={f:.2f} relev={r:.2f}  {item['question'][:45]}")
 
-    clean = lambda xs: [x for x in xs if x == x]  # drop NaNs from parse failures
+    clean = lambda xs: [x for x in xs if x == x]  # Drop NaNs From Parse Failures
     print(f"\nMean faithfulness: {statistics.mean(clean(faiths)):.3f}  (target > 0.85)")
     print(f"Mean relevancy:    {statistics.mean(clean(relevs)):.3f}")
 

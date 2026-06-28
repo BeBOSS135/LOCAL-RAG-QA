@@ -1,10 +1,4 @@
-"""Query phase orchestration:
-rewrite -> embed -> retrieve (hybrid) per phrasing -> union -> re-rank -> generate -> cite.
-
-`retrieve()` does everything up to (not including) generation, so callers can show
-sources immediately and stream the answer. `answer()` is the non-streaming convenience
-wrapper used by the CLI and the evaluation suite.
-"""
+# Query Orchestration: Rewrite -> Embed -> Retrieve -> Union -> Re-Rank -> Generate -> Cite
 import time
 
 import config
@@ -21,6 +15,7 @@ def _search(query: str, use_hybrid: bool, n: int) -> list[dict]:
     return retrieval.hybrid(query, q_vec, n) if use_hybrid else vectorstore.search(q_vec, k=n)
 
 
+# Everything Up to Generation - Returns the Chosen Chunks + Context Blocks
 def retrieve(
     question: str,
     k: int = config.TOP_K,
@@ -29,22 +24,21 @@ def retrieve(
     use_rewrite: bool = config.USE_REWRITE,
     retrieve_n: int = config.RETRIEVE_N,
 ) -> dict:
-    """Everything up to generation: returns the chosen chunks + context blocks."""
     t0 = time.perf_counter()
 
-    # Expand into alternate phrasings so source wording need not match the user's
+    # Expand Into Alternate Phrasings So Source Wording Need Not Match the User's
     rewrites = rewrite.expand(question) if use_rewrite else []
     queries = [question] + rewrites
 
-    # Over-fetch per phrasing when re-ranking, then union (dedupe by chunk id)
+    # Over-Fetch per Phrasing When Re-Ranking, Then Union (Dedupe by Chunk id)
     n = retrieve_n if (use_rerank or use_hybrid or use_rewrite) else k
     by_id: dict[str, dict] = {}
     for q in queries:
         for h in _search(q, use_hybrid, n):
-            by_id.setdefault(h["id"], h)  # first occurrence wins
+            by_id.setdefault(h["id"], h)  # First Occurrence Wins
     candidates = list(by_id.values())
 
-    # Always judge relevance against the ORIGINAL question, not the rewrites
+    # Always Judge Relevance Against the ORIGINAL Question, Not the Rewrites
     if use_rerank:
         hits = reranker.rerank(question, candidates, top_k=k)
     else:
@@ -71,8 +65,8 @@ def retrieve(
     }
 
 
+# Full Pipeline Including Generation (Non-Streaming) - Used by CLI + Eval
 def answer(question: str, **kwargs) -> dict:
-    """Full pipeline including generation (non-streaming). Used by CLI + eval."""
     t0 = time.perf_counter()
     result = retrieve(question, **kwargs)
     result["answer"] = llm.generate(question, result["blocks"])

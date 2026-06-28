@@ -1,18 +1,4 @@
-"""Query rewriting to bridge vocabulary gaps between question and source.
-
-Retrieval is vocabulary-sensitive — a chunk ranks high only if its wording matches
-the query's. Two complementary expansions, retrieved alongside the original question:
-
-  - Rephrasings: synonym/keyword variety (helps exact-term and BM25 matching).
-  - HyDE (Hypothetical Document Embeddings): a generated *answer* passage. Source
-    text is usually phrased like an explanation, not a question, so embedding a
-    plausible answer matches it far better — this is what catches a lecture that
-    describes "what percentage to remember" when you asked about "LSTM gates".
-
-The HyDE passage may be wrong; that's fine. It's only used to FIND chunks. The final
-answer is generated from the real retrieved text and re-ranked against the original
-question, so a hallucinated hypothesis can't leak into the output.
-"""
+# Query rewriting (rephrasings + HyDE)
 import ollama
 
 import config

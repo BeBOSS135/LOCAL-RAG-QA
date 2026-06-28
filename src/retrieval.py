@@ -1,9 +1,4 @@
-"""Hybrid retrieval: fuse BM25 keyword search with vector search.
-
-Vector search nails semantic similarity but misses exact terms (names, acronyms,
-codes); BM25 nails exact terms but misses paraphrase. Reciprocal Rank Fusion (RRF)
-combines their rankings without needing to normalise incompatible score scales.
-"""
+# Hybrid Retrieval - BM25 + Vector, Fused With RRF
 import re
 
 import numpy as np
@@ -11,17 +6,17 @@ import numpy as np
 import config
 import vectorstore
 
-_bm25 = None         # cached BM25 index (rebuilding per query would be wasteful)
-_bm25_chunks = None  # chunk list aligned to the BM25 corpus order
+_bm25 = None         # Cached BM25 Index - Rebuilding per Query Would Be Wasteful
+_bm25_chunks = None  # Chunk List Aligned to the BM25 Corpus Order
 
 
 def _tokenize(text: str) -> list[str]:
-    # Lowercase alnum tokens; keeps BM25 matching case- and punctuation-insensitive
+    # Lowercase Alnum Tokens - Keeps BM25 Case- and Punctuation-Insensitive
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
+# Build (Once) a BM25 Index Over Every Chunk in the Vector Store
 def _get_bm25():
-    """Build (once) a BM25 index over every chunk in the vector store."""
     global _bm25, _bm25_chunks
     if _bm25 is None:
         from rank_bm25 import BM25Okapi
@@ -30,33 +25,33 @@ def _get_bm25():
     return _bm25, _bm25_chunks
 
 
+# Top-n Chunks by BM25 Keyword Score
 def _bm25_candidates(query: str, n: int) -> list[dict]:
-    """Top-n chunks by BM25 keyword score."""
     bm25, chunks = _get_bm25()
     scores = bm25.get_scores(_tokenize(query))
     n = min(n, len(scores))
-    # argpartition finds the top-n in O(N) without sorting the rest, then we sort
-    # just those n by score descending — cheaper than a full sort on a big corpus
+    # argpartition Finds the Top-n in O(N) Without Sorting the Rest, Then We Sort
+    # Just Those n by Score Descending - Cheaper Than a Full Sort on a Big Corpus
     top = np.argpartition(scores, -n)[-n:]
     top = top[np.argsort(scores[top])[::-1]]
     return [chunks[i] for i in top]
 
 
+# Fuse Vector + BM25 Rankings With RRF, Return the Top-n Fused Chunks
 def hybrid(query: str, query_vector: list[float], n: int, rrf_k: int = config.RRF_K) -> list[dict]:
-    """Fuse vector + BM25 rankings with RRF, return the top-n fused chunks."""
     vec_hits = vectorstore.search(query_vector, k=n)
     bm25_hits = _bm25_candidates(query, n)
 
-    # RRF: each list contributes 1/(rrf_k + rank) to a chunk, rank starting at 1.
-    # A chunk both lists rank highly bubbles up; rrf_k damps the top-rank dominance.
+    # RRF: Each List Contributes 1/(rrf_k + rank) to a Chunk, Rank Starting at 1
+    # A Chunk Both Lists Rank Highly Bubbles Up; rrf_k Damps Top-Rank Dominance
     fused: dict[str, float] = {}
     info: dict[str, dict] = {}
     for rank, h in enumerate(vec_hits, start=1):
         fused[h["id"]] = fused.get(h["id"], 0.0) + 1.0 / (rrf_k + rank)
-        info[h["id"]] = h  # vector hit carries similarity as "score"
+        info[h["id"]] = h  # Vector Hit Carries Similarity as "score"
     for rank, h in enumerate(bm25_hits, start=1):
         fused[h["id"]] = fused.get(h["id"], 0.0) + 1.0 / (rrf_k + rank)
-        info.setdefault(h["id"], {**h, "score": None})  # BM25-only chunk has no similarity
+        info.setdefault(h["id"], {**h, "score": None})  # BM25-Only Chunk Has No Similarity
 
     out = []
     for cid in sorted(fused, key=lambda c: fused[c], reverse=True)[:n]:
@@ -66,7 +61,7 @@ def hybrid(query: str, query_vector: list[float], n: int, rrf_k: int = config.RR
     return out
 
 
+# Drop the Cached BM25 Index; Call After Re-Indexing So It Rebuilds
 def reset_cache() -> None:
-    """Drop the cached BM25 index; call after re-indexing so it rebuilds."""
     global _bm25, _bm25_chunks
     _bm25 = _bm25_chunks = None

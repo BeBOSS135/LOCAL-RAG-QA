@@ -1,11 +1,11 @@
-"""Chroma vector store wrapper: persist chunks + run similarity search."""
+# Vector Store
 import chromadb
 
 import config
 from ingest import Chunk
 
-_client_cache = None      # reuse one PersistentClient (reopening the DB is costly)
-_collection_cache = None  # reuse the collection handle too
+_client_cache = None      # Reuse One PersistentClient - Reopening the DB Is Costly
+_collection_cache = None  # Reuse the Collection Handle Too
 
 
 def _client():
@@ -20,8 +20,8 @@ def _collection():
     if _collection_cache is None:
         _collection_cache = _client().get_or_create_collection(
             name=config.COLLECTION_NAME,
-            # Cosine space matches the normalized embeddings; HNSW params trade
-            # build time / memory for recall (see config) and are size- not data-tuned
+            # Cosine Space Matches the Normalized Embeddings; HNSW Params (See Config)
+            # Trade Build Time / Memory for Recall and Are Size- Not Data-Tuned
             metadata={
                 "hnsw:space": "cosine",
                 "hnsw:M": config.HNSW_M,
@@ -32,24 +32,23 @@ def _collection():
     return _collection_cache
 
 
+# Drop the Whole Collection for a Full Rebuild
 def reset() -> None:
-    """Drop the whole collection (used for a full rebuild)."""
     global _collection_cache
     try:
         _client().delete_collection(config.COLLECTION_NAME)
     except Exception:
         pass
-    _collection_cache = None  # force re-create on next access
+    _collection_cache = None  # Force Re-Create on Next Access
 
 
+# Remove Every Chunk From One File (When It Changed or Was Removed)
 def delete_source(source: str) -> None:
-    """Remove every chunk that came from one file (used when it changed/was removed)."""
     _collection().delete(where={"source": source})
 
 
+# Append Chunks + Vectors in Batches So Large Datasets Don't Hit the Single-Add Limit
 def add(chunks: list[Chunk], vectors: list[list[float]]) -> None:
-    """Append chunks + vectors, inserting in batches so large datasets don't blow the
-    single-add limit."""
     col = _collection()
     for i in range(0, len(chunks), config.ADD_BATCH):
         batch = chunks[i:i + config.ADD_BATCH]
@@ -61,11 +60,11 @@ def add(chunks: list[Chunk], vectors: list[list[float]]) -> None:
         )
 
 
+# Return the k Most Similar Chunks as {id, text, source, score} Dicts
 def search(query_vector: list[float], k: int = config.TOP_K) -> list[dict]:
-    """Return the k most similar chunks as {id, text, source, score} dicts."""
     col = _collection()
     res = col.query(query_embeddings=[query_vector], n_results=k)
-    # Chroma nests results one level per query; we only ever send one query
+    # Chroma Nests Results One Level per Query; We Only Ever Send One Query
     hits = []
     for cid, text, meta, dist in zip(
         res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0]
@@ -74,13 +73,13 @@ def search(query_vector: list[float], k: int = config.TOP_K) -> list[dict]:
             "id": cid,
             "text": text,
             "source": meta["source"],
-            "score": 1 - dist,  # cosine distance -> similarity (higher = better)
+            "score": 1 - dist,  # Cosine Distance -> Similarity (Higher = Better)
         })
     return hits
 
 
+# Return Every Stored Chunk as {id, text, source} - Feeds the BM25 Index
 def all_chunks() -> list[dict]:
-    """Return every stored chunk as {id, text, source}. Feeds the BM25 index."""
     res = _collection().get()
     return [
         {"id": cid, "text": text, "source": meta["source"]}

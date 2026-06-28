@@ -1,16 +1,6 @@
-"""CLI: build / update the vector index from data/.
-
-Two-process design: text extraction + OCR runs in a **subprocess** (ingest.py as a
-worker), and embedding runs here in the main process. They must not share a process
-— EasyOCR's native stack and the SentenceTransformer model segfault together.
-
-Incremental by default: a manifest records each file's content hash, so unchanged
-files are skipped and only new/changed files are re-extracted+embedded (removed
-files are dropped). Use --rebuild to wipe and start clean.
-
-Run:  python index.py            # incremental update
-      python index.py --rebuild  # full rebuild
-"""
+# Index Build / Update CLI
+# Run:  python index.py            # Incremental Update
+#       python index.py --rebuild  # Full Rebuild
 import hashlib
 import json
 import os
@@ -29,8 +19,8 @@ MANIFEST = config.CHROMA_DIR / "manifest.json"
 INGEST = Path(__file__).resolve().parent / "ingest.py"
 
 
+# Content Hash of a File, So Identical Bytes Are Recognised as Unchanged
 def _hash(path: Path) -> str:
-    """Content hash of a file, so identical bytes are recognised as unchanged."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -43,8 +33,8 @@ def _save_manifest(manifest: dict) -> None:
     MANIFEST.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
+# Extract + Chunk the Given Files in a Separate Process (OCR Lives There)
 def _extract(paths: list[Path]) -> list[Chunk]:
-    """Extract+chunk the given files in a separate process (OCR lives there)."""
     if not paths:
         return []
     proc = subprocess.run(
@@ -53,7 +43,7 @@ def _extract(paths: list[Path]) -> list[Chunk]:
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     if proc.stderr.strip():
-        print(proc.stderr.strip())  # OCR-failure notices etc.
+        print(proc.stderr.strip())  # OCR-Failure Notices Etc.
     if proc.returncode != 0:
         raise RuntimeError(f"extraction subprocess failed (exit {proc.returncode})")
     return [Chunk(**d) for d in json.loads(proc.stdout)]
@@ -75,7 +65,7 @@ def main() -> None:
 
     current = {p.name: _hash(p) for p in docs}
 
-    # Drop chunks for files that vanished or changed (skip when rebuilding — already wiped)
+    # Drop Chunks for Files That Vanished or Changed (Skip When Rebuilding - Already Wiped)
     removed = 0
     for name in list(manifest):
         if manifest[name] != current.get(name):
@@ -84,7 +74,7 @@ def main() -> None:
             removed += name not in current
             manifest.pop(name, None)
 
-    # Re-extract only new/changed files
+    # Re-Extract Only New/Changed Files
     to_index = [p for p in docs if manifest.get(p.name) != current[p.name]]
     print(f"Extracting {len(to_index)} file(s) (OCR in subprocess)…")
     chunks = _extract(to_index)
@@ -99,7 +89,7 @@ def main() -> None:
         manifest[p.name] = current[p.name]
 
     _save_manifest(manifest)
-    retrieval.reset_cache()  # BM25 index is now stale; rebuilds on next query
+    retrieval.reset_cache()  # BM25 Index Is Now Stale; Rebuilds on Next Query
     skipped = len(docs) - len(to_index)
     print(f"Done. indexed={len(to_index)} removed={removed} unchanged={skipped} "
           f"-> {config.CHROMA_DIR}")

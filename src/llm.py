@@ -1,9 +1,9 @@
-"""Generation backend. Pluggable: today Ollama, swap here for an API later."""
+# Generation Backend
 import ollama
 
 import config
 
-# Instructed to stay grounded so we can measure faithfulness later
+# Instructed to Stay Grounded So We Can Measure Faithfulness Later
 SYSTEM_PROMPT = (
     "You are a precise assistant. Answer the question using ONLY the provided "
     "context. If the context does not contain the answer, say you don't know. "
@@ -20,20 +20,20 @@ def _messages(question: str, context_blocks: list[str]) -> list[dict]:
     ]
 
 
+# Send Context + Question to the Local LLM, Return the Full Answer
 def generate(question: str, context_blocks: list[str]) -> str:
-    """Send context + question to the local LLM and return the full answer text."""
     client = ollama.Client(host=config.OLLAMA_HOST)
     resp = client.chat(
         model=config.OLLAMA_MODEL,
         messages=_messages(question, context_blocks),
-        options={"temperature": 0.1},      # low temp -> stick to the context
-        keep_alive=config.OLLAMA_KEEP_ALIVE,  # stay resident in VRAM between queries
+        options={"temperature": 0.1},      # Low Temp -> Stick to the Context
+        keep_alive=config.OLLAMA_KEEP_ALIVE,  # Stay Resident in VRAM Between Queries
     )
     return resp["message"]["content"].strip()
 
 
+# Yield the Answer Token-by-Token as It Generates (for Responsive UIs)
 def generate_stream(question: str, context_blocks: list[str]):
-    """Yield the answer token-by-token as it's generated (for responsive UIs)."""
     client = ollama.Client(host=config.OLLAMA_HOST)
     for part in client.chat(
         model=config.OLLAMA_MODEL,

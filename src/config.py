@@ -1,8 +1,8 @@
-"""Central config for the RAG pipeline. One place to tune every knob."""
-# Pre-load pyarrow before torch/sklearn ever load. Deep in sentence-transformers'
-# import chain, sklearn->pandas triggers pyarrow's native lib, which segfaults on
-# Windows when torch is already loaded. Importing it first (config is imported
-# before torch everywhere) sidesteps the DLL clash. No-op if pyarrow is absent.
+# Config
+
+# Pre-Import Pyarrow Before Torch to Dodge a Windows DLL Segfault
+# sklearn->pandas Loads Pyarrow's Native Lib, Which Crashes if Torch Loaded First
+# Config Is Imported Before Torch Everywhere, So Importing Here Wins the Race
 try:
     import pyarrow  # noqa: F401
 except Exception:
@@ -10,66 +10,61 @@ except Exception:
 
 from pathlib import Path
 
-# Paths. Code lives in src/; data, index and eval_set sit at the repo root one level up.
+# Paths - Code in src/, Data and Index One Level Up at Repo Root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data"          # drop documents to index here
-CHROMA_DIR = PROJECT_ROOT / "chroma_db"   # persisted vector store
+DATA_DIR = PROJECT_ROOT / "data"          # Drop Documents to Index Here
+CHROMA_DIR = PROJECT_ROOT / "chroma_db"   # Persisted Vector Store
 
-# Chunking (token-based). Capped at the embedding model's max sequence length so
-# no chunk is silently truncated when embedded — word counts can't guarantee this.
-CHUNK_TOKENS = 400          # bge-base allows 512; 400 keeps room for special tokens
-CHUNK_OVERLAP_TOKENS = 60   # ~15% overlap to preserve context across boundaries
+# Token-Based Chunking, Capped at the Model's Max Sequence Length
+# So No Chunk Is Silently Truncated When Embedded - Word Counts Can't Guarantee This
+CHUNK_TOKENS = 400          # bge-base Allows 512; 400 Leaves Room for Special Tokens
+CHUNK_OVERLAP_TOKENS = 60   # ~15% Overlap to Preserve Context Across Boundaries
 
-# OCR fallback — slide/diagram PDFs carry content in images the text layer can't
-# see. We OCR a page only when its extracted text is sparse, so text-rich PDFs stay
-# fast while image-heavy slides still get read. Dataset-agnostic by design.
+# OCR Fallback for Slide/Diagram PDFs That Hide Content in Images
+# OCR a Page Only When Its Text Is Sparse, So Text-Rich PDFs Stay Fast
 USE_OCR = True
-OCR_MIN_CHARS = 120  # text-layer length below which a page is OCR'd instead
-OCR_DPI = 200        # render resolution for OCR (higher = slower, more accurate)
+OCR_MIN_CHARS = 120  # Text-Layer Length Below Which a Page Is OCR'd
+OCR_DPI = 200        # Render Resolution (Higher = Slower, More Accurate)
 OCR_LANGS = ["en"]
 
-# Embeddings — bge-base-en-v1.5 (768-dim) ranks far better than MiniLM on retrieval
-# and still runs fast on a 4060. bge wants queries (not passages) prefixed with an
-# instruction; QUERY_PREFIX is applied only to query embeddings (see embeddings.py).
+# Embeddings - bge-base-en-v1.5 (768-dim) Beats MiniLM on Retrieval, Still Fast on a 4060
+# bge Wants Queries (Not Passages) Instruction-Prefixed; Prefix Applied Only to Queries
 EMBED_MODEL = "BAAI/bge-base-en-v1.5"
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
-EMBED_DEVICE = "cuda"             # auto-falls back to cpu in embeddings.py
-EMBED_BATCH = 128                 # larger batch = better GPU utilisation
-NORMALIZE = True                  # unit vectors so cosine == dot product, stable
+EMBED_DEVICE = "cuda"             # Auto-Falls Back to CPU in embeddings.py
+EMBED_BATCH = 128                 # Larger Batch = Better GPU Utilisation
+NORMALIZE = True                  # Unit Vectors So Cosine == Dot Product
 
-# Vector store
+# Vector Store
 COLLECTION_NAME = "documents"
-ADD_BATCH = 5000  # Chroma rejects huge single adds; chunk the insert for big datasets
-# HNSW index params — higher = better recall at the cost of build time / memory.
-# These are dataset-size dependent, not data-specific, so safe general defaults.
+ADD_BATCH = 5000  # Chroma Rejects Huge Single Adds, So Batch the Insert
+# HNSW Params - Higher = Better Recall at the Cost of Build Time / Memory
+# Dataset-Size Dependent, Not Data-Specific, So Safe as General Defaults
 HNSW_M = 32
 HNSW_CONSTRUCTION_EF = 200
 HNSW_SEARCH_EF = 100
 
 # Retrieval
-RETRIEVE_N = 10  # initial vector candidates pulled before re-ranking
-TOP_K = 4        # chunks kept (after re-rank) and fed to the LLM
+RETRIEVE_N = 10  # Initial Candidates Pulled Before Re-Ranking
+TOP_K = 4        # Chunks Kept After Re-Rank and Fed to the LLM
 
-# Query rewriting — expand the question into alternate phrasings (+ a HyDE answer
-# passage) before retrieval, so a query's wording doesn't have to match the source's.
-# Off by default: it costs two extra LLM calls (~doubles latency) and only helps
-# ordinary vocabulary gaps, so reach for it (UI toggle) when a query returns weak
-# sources rather than paying the cost on every question.
+# Query Rewriting - Expand Into Alternate Phrasings (+ HyDE Answer) Before Retrieval
+# So Query Wording Need Not Match the Source's
+# Off by Default: Two Extra LLM Calls (~Doubles Latency); Toggle On for Weak Sources
 USE_REWRITE = False
-REWRITE_N = 3  # number of alternate phrasings generated per question
+REWRITE_N = 3  # Alternate Phrasings Generated per Question
 
-# Hybrid retrieval (BM25 keyword + vector, fused with Reciprocal Rank Fusion)
+# Hybrid Retrieval - BM25 Keyword + Vector, Fused With RRF
 USE_HYBRID = True
-RRF_K = 60  # RRF smoothing constant; larger = flatter rank weighting
+RRF_K = 60  # RRF Smoothing Constant; Larger = Flatter Rank Weighting
 
-# Re-ranking — bge-reranker-base is a stronger cross-encoder than ms-marco-MiniLM,
-# giving sharper final ordering (it reorders RETRIEVE_N candidates, keeps TOP_K).
+# Re-Ranking - bge-reranker-base Is a Stronger Cross-Encoder Than ms-marco-MiniLM
+# Reorders RETRIEVE_N Candidates Down to TOP_K
 USE_RERANK = True
 RERANK_MODEL = "BAAI/bge-reranker-base"
-RERANK_BATCH = 64  # scores all candidates in batches; matters if RETRIEVE_N grows
+RERANK_BATCH = 64  # Scores Candidates in Batches; Matters if RETRIEVE_N Grows
 
-# LLM (Ollama, local)
+# LLM - Ollama, Local
 OLLAMA_MODEL = "mistral"
 OLLAMA_HOST = "http://localhost:11434"
-OLLAMA_KEEP_ALIVE = "30m"  # keep the model resident in VRAM between queries
-
+OLLAMA_KEEP_ALIVE = "30m"  # Keep Model Resident in VRAM Between Queries

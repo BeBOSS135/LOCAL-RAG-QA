@@ -1,4 +1,4 @@
-"""CLI: ask a question against the indexed documents (streams the answer)."""
+# Query CLI
 import sys
 import time
 
@@ -20,7 +20,7 @@ def main() -> None:
         print("  (also searched: " + " | ".join(r["rewrites"]) + ")")
 
     print("\nA: ", end="", flush=True)
-    for token in llm.generate_stream(question, r["blocks"]):  # stream as it generates
+    for token in llm.generate_stream(question, r["blocks"]):  # Stream as It Generates
         print(token, end="", flush=True)
     print()
 
