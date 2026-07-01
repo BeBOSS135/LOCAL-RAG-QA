@@ -1,8 +1,7 @@
 # RAG Question-Answering
 
 A local Retrieval-Augmented Generation system that answers questions about your
-own documents, with source citations. Runs **fully offline** on a consumer GPU
-(built/tested on an RTX 4060).
+own documents, with source citations. Runs **fully offline** on a consumer GPU.
 
 ## Architecture
 
