@@ -1,0 +1,13 @@
+# Streamlit defaults for this app. run.ps1 also passes these on the command line,
+# but this file makes them the default for ANY launch path (e.g. running
+# `streamlit run src/app.py` directly), so the UI is never accidentally exposed.
+[server]
+# Bind to loopback only. Without this, Streamlit binds 0.0.0.0 (all interfaces),
+# which makes the app reachable from other devices on the LAN. This app has no
+# authentication, so it must stay on localhost.
+address = "127.0.0.1"
+# Don't auto-open a browser / print the LAN "Network URL" that invites sharing.
+headless = true
+# Leave XSRF protection ON (the default). It defends the localhost app against
+# cross-site request forgery from a malicious page open in the same browser.
+enableXsrfProtection = true
