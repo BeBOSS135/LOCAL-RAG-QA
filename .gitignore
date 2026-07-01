@@ -11,6 +11,10 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Logs / temp
+# Logs / temp - includes the query + feedback JSONL (the user's own queries; never push)
 *.log
 *.log.err
+logs/
+
+# Machine-local config kept out of the repo: personal source paths + private eval sets
+*.local.json

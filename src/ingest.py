@@ -1,139 +1,133 @@
-# Document Loading + Chunking (Also an Extraction Worker: python ingest.py <file>...)
+# Chunking + Document Listing (Also the Extraction Worker: reads a JSON spec on
+# stdin, emits Chunk dicts on stdout - OCR Runs Here, Isolated From the Embedder)
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import config
 import embeddings
-
-SUPPORTED = {".txt", ".md", ".pdf"}
+import loaders
 
 
 @dataclass
 class Chunk:
     text: str
-    source: str       # Filename the Chunk Came From
-    chunk_index: int  # Position Within That File
+    source_path: str    # "<source name>/<relpath>" - Collision-Free Id Base
+    source_type: str    # "markdown" | "pdf" | "text"
+    title: str          # Note Title (Frontmatter) or Filename Stem
+    heading_path: str   # "H1 > H2" (md), "p.3" (pdf), "" (txt)
+    tags: list[str]     # Frontmatter + Inline #tags (md); [] Otherwise
+    mtime: float        # File st_mtime - for Recency Ranking Later
+    content_hash: str   # sha256 of File Bytes (Carried for Reference)
+    chunk_index: int    # Position Within the File
 
 
-_ocr_reader = None  # Lazy Singleton - Loading EasyOCR Weights Is Slow
+# Token Length of a String Under the Embedder's Tokenizer (Decides Merge/Window)
+def _token_len(text: str) -> int:
+    return len(embeddings.get_tokenizer()(text, add_special_tokens=False)["input_ids"])
 
 
-def _get_ocr_reader():
-    import torch
-    import easyocr
-    global _ocr_reader
-    if _ocr_reader is None:
-        # GPU When Available; EasyOCR Shares the Same CUDA Torch as the Embedder
-        # verbose=False: Its Progress Bar Prints Block Chars That Crash the cp1252 Console
-        _ocr_reader = easyocr.Reader(
-            config.OCR_LANGS, gpu=torch.cuda.is_available(), verbose=False
-        )
-    return _ocr_reader
-
-
-# Render a PDF Page to an Image and OCR It (for Sparse/Diagram Pages)
-def _ocr_page(page) -> str:
-    import io
-    import numpy as np
-    from PIL import Image
-    pix = page.get_pixmap(dpi=config.OCR_DPI)
-    img = np.array(Image.open(io.BytesIO(pix.tobytes("png"))))
-    # paragraph=True Groups Nearby Words Into Lines; detail=0 Returns Plain Strings
-    return "\n".join(_get_ocr_reader().readtext(img, detail=0, paragraph=True))
-
-
-# Extract Text per Page via PyMuPDF, Falling Back to OCR on Sparse Pages
-def _read_pdf(path: Path) -> str:
-    import fitz  # PyMuPDF - Better Text Extraction Than pypdf, and Renders Pages
-    parts = []
-    ocr_failures = 0
-    with fitz.open(str(path)) as doc:
-        for page in doc:
-            text = page.get_text().strip()
-            # Near-Empty Text Layer Means Content Lives in the Slide Image -> OCR
-            # One Unreadable Page Must Not Abort the Whole Index, So OCR Is Guarded
-            if config.USE_OCR and len(text) < config.OCR_MIN_CHARS:
-                try:
-                    ocr_text = _ocr_page(page).strip()
-                    if len(ocr_text) > len(text):
-                        text = ocr_text
-                except Exception:
-                    ocr_failures += 1
-            if text:
-                parts.append(text)
-    if ocr_failures:
-        # stderr So It Never Corrupts the JSON This Worker Writes to stdout
-        print(f"    ({ocr_failures} page(s) failed OCR, used text layer)", file=sys.stderr)
-    return "\n".join(parts)
-
-
-# Extract Raw Text From One File - Supports .txt, .md, .pdf
-def _read_file(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".txt", ".md"}:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    if suffix == ".pdf":
-        return _read_pdf(path)
-    raise ValueError(f"Unsupported file type: {path.name}")
-
-
-# Sliding Window Over the Tokenizer's Tokens, So Every Chunk Fits the Model
-# Word-Count Windows Can't Bound Tokens (a 400-Word Chunk Can Be 500+ and Get Truncated)
-# Tokenize Once With Offset Mapping, Window Over Offsets, Then Slice Text by Character -
-# Keeps Real Text (No Sub-Word Breakage) While Guaranteeing Each Chunk <= CHUNK_TOKENS
-def _chunk_tokens(text: str, source: str) -> list[Chunk]:
+# Sliding Token Window Over One Section's Text, So Every Chunk Fits the Embedder's
+# Max Tokens (Word Windows Can't Bound Tokens). Tokenize Once With Offset Mapping,
+# Window Over Offsets, Slice Text by Char So There's No Sub-Word Breakage
+def _window(text: str) -> list[str]:
     tok = embeddings.get_tokenizer()
-    enc = tok(text, add_special_tokens=False, return_offsets_mapping=True)
-    offsets = enc["offset_mapping"]
+    offsets = tok(text, add_special_tokens=False, return_offsets_mapping=True)["offset_mapping"]
     if not offsets:
         return []
     size = config.CHUNK_TOKENS
     step = max(1, size - config.CHUNK_OVERLAP_TOKENS)  # Guard Misconfig (Overlap >= Size)
-
-    chunks: list[Chunk] = []
-    for i, start in enumerate(range(0, len(offsets), step)):
+    out = []
+    for start in range(0, len(offsets), step):
         window = offsets[start:start + size]
         if not window:
             break
-        # Slice From the First Token's Start Char to the Last Token's End Char
         snippet = text[window[0][0]:window[-1][1]].strip()
         if snippet:
-            chunks.append(Chunk(text=snippet, source=source, chunk_index=i))
+            out.append(snippet)
         if start + size >= len(offsets):
-            break  # Last Window Reached; Avoid Emitting Trailing Duplicates
-    return chunks
+            break  # Last Window Reached; Avoid Trailing Duplicates
+    return out
 
 
-# Read and Chunk a Single File
-def chunk_file(path: Path) -> list[Chunk]:
-    return _chunk_tokens(_read_file(path), source=path.name)
-
-
-# Every Supported Document Under data_dir, in Stable Order
-def list_documents(data_dir: Path = config.DATA_DIR) -> list[Path]:
-    return sorted(
-        p for p in data_dir.rglob("*")
-        if p.is_file() and p.suffix.lower() in SUPPORTED
-    )
-
-
-# Read Every Supported File in data_dir and Return All Chunks
-def load_chunks(data_dir: Path = config.DATA_DIR) -> list[Chunk]:
+# Turn a LoadedDoc's Sections Into Chunks. Structure-Aware: Greedily Merge Small
+# Adjacent Sections Under the Same Top Heading (Avoids One-Line Chunks From
+# Heading-Heavy Markdown), and Token-Window Anything Still Too Big. Each Chunk
+# Inherits Its Section's heading_path Plus the Doc's Metadata
+def _chunk_doc(doc: loaders.LoadedDoc, source_path: str, mtime: float, content_hash: str) -> list[Chunk]:
     chunks: list[Chunk] = []
-    for path in list_documents(data_dir):
-        file_chunks = chunk_file(path)
-        chunks.extend(file_chunks)
-        print(f"  {path.name}: {len(file_chunks)} chunks", file=sys.stderr)
+
+    def emit(text: str, heading_path: str):
+        for piece in _window(text):
+            chunks.append(Chunk(
+                text=piece, source_path=source_path, source_type=doc.source_type,
+                title=doc.title, heading_path=heading_path, tags=list(doc.tags),
+                mtime=mtime, content_hash=content_hash, chunk_index=len(chunks),
+            ))
+
+    top = lambda hp: hp.split(" > ")[0] if hp else ""
+    buf_text, buf_hp, buf_tokens = "", "", 0
+
+    def flush():
+        nonlocal buf_text, buf_hp, buf_tokens
+        if buf_text.strip():
+            emit(buf_text, buf_hp)
+        buf_text, buf_hp, buf_tokens = "", "", 0
+
+    for sec in doc.sections:
+        n = _token_len(sec.text)
+        if n > config.CHUNK_TOKENS:        # Too Big to Merge - Flush, Then Window Alone
+            flush()
+            emit(sec.text, sec.heading_path)
+            continue
+        # New Group on Top-Heading Change or When Adding Would Overflow the Window
+        if buf_text and (top(sec.heading_path) != top(buf_hp) or buf_tokens + n > config.CHUNK_TOKENS):
+            flush()
+        if not buf_text:
+            buf_hp = sec.heading_path      # Group Anchored at Its First Section
+        else:
+            buf_text += "\n\n"
+        buf_text += sec.text
+        buf_tokens += n
+    flush()
     return chunks
+
+
+# Load + Chunk One File Into Fully-Populated Chunks. hash/mtime Come From the
+# Caller (index.py Already Stats/Hashes for the Manifest - Don't Re-Read the File)
+def chunk_file(abs_path: Path, source_path: str, content_hash: str, mtime: float) -> list[Chunk]:
+    return _chunk_doc(loaders.load(abs_path), source_path, mtime, content_hash)
+
+
+# Every Indexable File Across All Configured Sources, as (abs_path, source_path).
+# source_path = "<source name>/<relpath>" Keeps Files Unique Across Roots
+def list_documents() -> list[tuple[Path, str]]:
+    out: list[tuple[Path, str]] = []
+    for src in config.SOURCES:
+        root = Path(src["path"])
+        if not root.exists():
+            continue
+        exclude = set(src.get("exclude", []))  # Folder Names to Skip Under This Root
+        for p in sorted(root.rglob("*")):
+            if not (p.is_file() and p.suffix.lower() in config.INDEX_EXTENSIONS):
+                continue
+            parts = p.relative_to(root).parts
+            # Skip Hidden Dirs (.obsidian/.git) and Any Excluded Ancestor Folder
+            if any(part.startswith(".") for part in parts) or (exclude & set(parts[:-1])):
+                continue
+            out.append((p, f"{src['name']}/{p.relative_to(root).as_posix()}"))
+    return out
 
 
 if __name__ == "__main__":
-    # Extraction Worker: Emit Chunks for the Given Files as JSON on stdout
+    # Extraction Worker: Read [{abs_path, source_path, content_hash, mtime}] on stdin
+    # (Avoids the Windows ~32k argv Limit as the Corpus Grows), Emit Chunk Dicts
     import json
+    spec = json.load(sys.stdin)
     out = [
-        {"text": c.text, "source": c.source, "chunk_index": c.chunk_index}
-        for arg in sys.argv[1:]
-        for c in chunk_file(Path(arg))
+        vars(c)
+        for item in spec
+        for c in chunk_file(Path(item["abs_path"]), item["source_path"],
+                            item["content_hash"], item["mtime"])
     ]
     json.dump(out, sys.stdout)

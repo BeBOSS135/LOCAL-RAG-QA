@@ -1,12 +1,13 @@
 [
-  {"question": "What is transfer learning and when is it useful?", "expected": ["L06"]},
-  {"question": "How does a convolutional neural network work?", "expected": ["L05"]},
-  {"question": "What are word embeddings?", "expected": ["L10"]},
-  {"question": "How does the attention mechanism in a transformer work?", "expected": ["L11"]},
-  {"question": "What is a recurrent neural network?", "expected": ["L09"]},
-  {"question": "What is semantic segmentation?", "expected": ["L08"]},
-  {"question": "What is an autoencoder and what is it used for?", "expected": ["L04"]},
-  {"question": "What is object detection?", "expected": ["L07"]},
-  {"question": "What is an artificial neuron or perceptron?", "expected": ["L02", "L01"]},
-  {"question": "How are images synthesised with generative models?", "expected": ["L12"]}
+  {"question": "What is Retrieval-Augmented Generation?", "expected": ["sample"]},
+  {"question": "How are documents split before they are embedded?", "expected": ["sample"]},
+  {"question": "What retrieval methods does the project combine?", "expected": ["sample"]},
+  {"question": "Which local LLM writes the answer?", "expected": ["sample"]},
+  {"question": "Why does everything run locally?", "expected": ["sample"]},
+
+  {"question": "Who won the 2022 FIFA World Cup?", "answerable": false},
+  {"question": "What is the capital of Australia?", "answerable": false},
+  {"question": "How do I make sourdough bread from scratch?", "answerable": false},
+  {"question": "What were the company's Q3 2025 revenue figures?", "answerable": false},
+  {"question": "What time does the downtown pharmacy close on Sundays?", "answerable": false}
 ]

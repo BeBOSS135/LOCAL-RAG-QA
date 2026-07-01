@@ -33,12 +33,14 @@ def _save_manifest(manifest: dict) -> None:
     MANIFEST.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-# Extract + Chunk the Given Files in a Separate Process (OCR Lives There)
-def _extract(paths: list[Path]) -> list[Chunk]:
-    if not paths:
+# Extract + Chunk the Given Files in a Separate Process (OCR Lives There). The
+# File Spec Goes in via stdin (Not argv) So It Scales Past the Windows ~32k Limit
+def _extract(spec: list[dict]) -> list[Chunk]:
+    if not spec:
         return []
     proc = subprocess.run(
-        [sys.executable, str(INGEST), *[str(p) for p in paths]],
+        [sys.executable, str(INGEST)],
+        input=json.dumps(spec),
         capture_output=True, text=True, encoding="utf-8",
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
@@ -51,9 +53,9 @@ def _extract(paths: list[Path]) -> list[Chunk]:
 
 def main() -> None:
     rebuild = "--rebuild" in sys.argv
-    docs = list_documents()
+    docs = list_documents()  # [(abs_path, source_path)]
     if not docs:
-        print("No documents found. Drop .txt/.md/.pdf files into data/ and retry.")
+        print("No documents found. Add files under a configured source (see config.SOURCES).")
         return
 
     if rebuild:
@@ -63,30 +65,38 @@ def main() -> None:
     else:
         manifest = _load_manifest()
 
-    current = {p.name: _hash(p) for p in docs}
+    # Everything Keyed by source_path (Collision-Free Across Roots), Not Filename
+    abs_by_sp = {sp: p for p, sp in docs}
+    current = {sp: _hash(p) for p, sp in docs}
+    mtimes = {sp: p.stat().st_mtime for p, sp in docs}
 
     # Drop Chunks for Files That Vanished or Changed (Skip When Rebuilding - Already Wiped)
     removed = 0
-    for name in list(manifest):
-        if manifest[name] != current.get(name):
+    for sp in list(manifest):
+        if manifest[sp] != current.get(sp):
             if not rebuild:
-                vectorstore.delete_source(name)
-            removed += name not in current
-            manifest.pop(name, None)
+                vectorstore.delete_source(sp)
+            removed += sp not in current
+            manifest.pop(sp, None)
 
-    # Re-Extract Only New/Changed Files
-    to_index = [p for p in docs if manifest.get(p.name) != current[p.name]]
+    # Re-Extract Only New/Changed Files; Pass hash/mtime So the Worker Needn't Re-Stat
+    to_index = [sp for _, sp in docs if manifest.get(sp) != current[sp]]
     print(f"Extracting {len(to_index)} file(s) (OCR in subprocess)…")
-    chunks = _extract(to_index)
+    spec = [
+        {"abs_path": str(abs_by_sp[sp]), "source_path": sp,
+         "content_hash": current[sp], "mtime": mtimes[sp]}
+        for sp in to_index
+    ]
+    chunks = _extract(spec)
 
     if chunks:
         print(f"Embedding {len(chunks)} chunks")
         vectorstore.add(chunks, embeddings.embed([c.text for c in chunks]))
 
-    per_file = Counter(c.source for c in chunks)
-    for p in to_index:
-        print(f"  {'~' if p.name in manifest else '+'} {p.name}: {per_file[p.name]} chunks")
-        manifest[p.name] = current[p.name]
+    per_file = Counter(c.source_path for c in chunks)
+    for sp in to_index:
+        print(f"  {'~' if sp in manifest else '+'} {sp}: {per_file[sp]} chunks")
+        manifest[sp] = current[sp]
 
     _save_manifest(manifest)
     retrieval.reset_cache()  # BM25 Index Is Now Stale; Rebuilds on Next Query

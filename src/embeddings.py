@@ -18,7 +18,7 @@ def _get_model():
         # Honor Configured Device but Degrade Gracefully Without CUDA
         device = config.EMBED_DEVICE if torch.cuda.is_available() else "cpu"
         print(f"Loading embedding model '{config.EMBED_MODEL}' on {device}")
-        _model = SentenceTransformer(config.EMBED_MODEL, device=device)
+        _model = SentenceTransformer(config.EMBED_MODEL, device=device, revision=config.EMBED_REVISION)
     return _model
 
 
@@ -33,7 +33,7 @@ def get_tokenizer():
         repo = config.EMBED_MODEL
         if "/" not in repo:
             repo = f"sentence-transformers/{repo}"
-        _tokenizer = AutoTokenizer.from_pretrained(repo)
+        _tokenizer = AutoTokenizer.from_pretrained(repo, revision=config.EMBED_REVISION)
     return _tokenizer
 
 

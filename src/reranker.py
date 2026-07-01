@@ -11,7 +11,7 @@ def _get_model():
         from sentence_transformers import CrossEncoder
         device = config.EMBED_DEVICE if torch.cuda.is_available() else "cpu"
         print(f"Loading reranker '{config.RERANK_MODEL}' on {device}")
-        _model = CrossEncoder(config.RERANK_MODEL, device=device)
+        _model = CrossEncoder(config.RERANK_MODEL, device=device, revision=config.RERANK_REVISION)
     return _model
 
 

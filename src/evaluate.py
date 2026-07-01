@@ -1,5 +1,6 @@
-# Evaluation - Retrieval Metrics + LLM-Judged Generation Metrics
-# Run:  python evaluate.py            # Retrieval Comparison
+# Evaluation - Retrieval Metrics + Abstention Gate + LLM-Judged Generation Metrics
+# Run:  python evaluate.py            # Retrieval Comparison (Answerable Set)
+#       python evaluate.py --abstain  # + Abstention Gate: false-refusal vs correct-abstention
 #       python evaluate.py --judge    # + Faithfulness/Relevancy (Slow, Local LLM)
 import json
 import re
@@ -13,7 +14,17 @@ import reranker
 import retrieval
 import vectorstore
 
-EVAL_SET = json.loads((config.PROJECT_ROOT / "eval_set.json").read_text(encoding="utf-8"))
+# Prefer a Local, Gitignored Eval Set (Your Own Vault Questions) if Present; Otherwise
+# the Generic Sample Eval Shipped With the Repo (Runs Out-of-Box on data/sample.md)
+_eval_path = config.PROJECT_ROOT / "eval_set.local.json"
+if not _eval_path.exists():
+    _eval_path = config.PROJECT_ROOT / "eval_set.json"
+EVAL_SET = json.loads(_eval_path.read_text(encoding="utf-8"))
+
+# Answerable Items Carry "expected" Source Tags; the Unanswerable Slice ("answerable": false)
+# Has None and Is Used Only by the Abstention Eval, So Retrieval/Judge Evals Skip It
+ANSWERABLE = [it for it in EVAL_SET if it.get("answerable", True)]
+UNANSWERABLE = [it for it in EVAL_SET if not it.get("answerable", True)]
 
 # Retrieval Configurations to Compare
 CONFIGS = {
@@ -32,7 +43,7 @@ def _retrieve_sources(question, k, use_hybrid, use_rerank):
         hits = reranker.rerank(question, hits, top_k=k)
     else:
         hits = hits[:k]
-    return [h["source"] for h in hits]
+    return [h["source_path"] for h in hits]
 
 
 # 1-Based Rank of the First Source Matching Any Expected Lecture Tag, Else 0
@@ -44,19 +55,46 @@ def _first_hit_rank(sources, expected):
 
 
 def retrieval_eval(k=config.TOP_K):
-    print(f"\nRetrieval eval  ({len(EVAL_SET)} questions, k={k})")
+    print(f"\nRetrieval eval  ({len(ANSWERABLE)} answerable questions, k={k})")
     print(f"{'config':<16}{'hit-rate@k':>12}{'MRR':>8}{'latency(ms)':>14}")
     for name, cfg in CONFIGS.items():
         hits, rrs, lats = 0, [], []
-        for item in EVAL_SET:
+        for item in ANSWERABLE:
             t0 = time.perf_counter()
             sources = _retrieve_sources(item["question"], k, **cfg)
             lats.append((time.perf_counter() - t0) * 1000)
             rank = _first_hit_rank(sources, item["expected"])
             hits += rank > 0
             rrs.append(1.0 / rank if rank else 0.0)
-        print(f"{name:<16}{hits / len(EVAL_SET):>12.2f}"
+        print(f"{name:<16}{hits / len(ANSWERABLE):>12.2f}"
               f"{statistics.mean(rrs):>8.2f}{statistics.median(lats):>14.0f}")
+
+
+# Abstention Eval - Does the Gate Refuse the Out-of-Corpus Questions Without Wrongly
+# Refusing the Answerable Ones? Prints Each Top Score So the Threshold Can Be Tuned to
+# the Gap Between the Two Groups (Run With the Default Pipeline: Hybrid + Re-Rank)
+def abstain_eval(k=config.TOP_K):
+    import rag
+
+    print(f"\nAbstention eval  (gate {'ON' if config.USE_ABSTAIN else 'OFF'}, "
+          f"rerank floor {config.ABSTAIN_MIN_RERANK}, similarity floor {config.ABSTAIN_MIN_SIMILARITY})")
+
+    def run(items, label):
+        rows = []
+        for it in items:
+            r = rag.retrieve(it["question"], k=k)
+            rows.append((r["abstain"],))
+            verdict = "REFUSE" if r["abstain"] else "answer"
+            print(f"  {label:<12} rerank={str(r['top_score']):<6} sim={str(r['top_sim']):<6} "
+                  f"{verdict:<7} {it['question'][:46]}")
+        return rows
+
+    a = run(ANSWERABLE, "answerable")
+    u = run(UNANSWERABLE, "unanswerable")
+    false_refuse = sum(1 for (ab,) in a if ab)
+    correct_abstain = sum(1 for (ab,) in u if ab)
+    print(f"\nFalse-refusal rate (answerable):    {false_refuse}/{len(a)} = {false_refuse / len(a):.2f}  (want 0.00)")
+    print(f"Correct-abstention rate (out-corpus): {correct_abstain}/{len(u)} = {correct_abstain / len(u):.2f}  (want 1.00)")
 
 
 FAITHFULNESS_PROMPT = (
@@ -98,10 +136,10 @@ def judge_eval(k=config.TOP_K):
     import rag
 
     client = ollama.Client(host=config.OLLAMA_HOST)
-    print(f"\nLLM-judge eval  ({len(EVAL_SET)} questions, local judge - this is slow)")
+    print(f"\nLLM-judge eval  ({len(ANSWERABLE)} answerable questions, local judge - this is slow)")
 
     faiths, relevs = [], []
-    for item in EVAL_SET:
+    for item in ANSWERABLE:
         res = rag.answer(item["question"], k=k)
         context = "\n\n".join(s["text"] for s in res["sources"])
         f = _judge(client, FAITHFULNESS_PROMPT.format(context=context, answer=res["answer"]))
@@ -117,5 +155,7 @@ def judge_eval(k=config.TOP_K):
 
 if __name__ == "__main__":
     retrieval_eval()
+    if "--abstain" in sys.argv:
+        abstain_eval()
     if "--judge" in sys.argv:
         judge_eval()

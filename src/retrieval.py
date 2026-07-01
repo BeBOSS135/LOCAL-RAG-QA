@@ -25,10 +25,19 @@ def _get_bm25():
     return _bm25, _bm25_chunks
 
 
-# Top-n Chunks by BM25 Keyword Score
-def _bm25_candidates(query: str, n: int) -> list[dict]:
+# Top-n Chunks by BM25 Keyword Score. scope_prefix Restricts to Chunks Whose
+# source_path Sits Under That folder (Keyword Side of the Scope Filter - Mirrors the
+# Vector Side's where= So Both Halves of the Hybrid See the Same Subset)
+def _bm25_candidates(query: str, n: int, scope_prefix: str | None = None) -> list[dict]:
     bm25, chunks = _get_bm25()
     scores = bm25.get_scores(_tokenize(query))
+    if scope_prefix:
+        pre = scope_prefix + "/"
+        idx = [i for i in range(len(chunks)) if chunks[i]["source_path"].startswith(pre)]
+        if not idx:
+            return []
+        idx.sort(key=lambda i: scores[i], reverse=True)
+        return [chunks[i] for i in idx[:n]]
     n = min(n, len(scores))
     # argpartition Finds the Top-n in O(N) Without Sorting the Rest, Then We Sort
     # Just Those n by Score Descending - Cheaper Than a Full Sort on a Big Corpus
@@ -37,10 +46,13 @@ def _bm25_candidates(query: str, n: int) -> list[dict]:
     return [chunks[i] for i in top]
 
 
-# Fuse Vector + BM25 Rankings With RRF, Return the Top-n Fused Chunks
-def hybrid(query: str, query_vector: list[float], n: int, rrf_k: int = config.RRF_K) -> list[dict]:
-    vec_hits = vectorstore.search(query_vector, k=n)
-    bm25_hits = _bm25_candidates(query, n)
+# Fuse Vector + BM25 Rankings With RRF, Return the Top-n Fused Chunks. where scopes
+# the Vector Side (Chroma Pre-Filter); scope_prefix Scopes the BM25 Side - Pass Both
+# for a Scoped Query So Neither Half Leaks Out-of-Scope Chunks Into the Fusion
+def hybrid(query: str, query_vector: list[float], n: int, rrf_k: int = config.RRF_K,
+           where: dict | None = None, scope_prefix: str | None = None) -> list[dict]:
+    vec_hits = vectorstore.search(query_vector, k=n, where=where)
+    bm25_hits = _bm25_candidates(query, n, scope_prefix)
 
     # RRF: Each List Contributes 1/(rrf_k + rank) to a Chunk, Rank Starting at 1
     # A Chunk Both Lists Rank Highly Bubbles Up; rrf_k Damps Top-Rank Dominance
