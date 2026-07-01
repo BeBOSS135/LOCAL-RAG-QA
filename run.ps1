@@ -102,7 +102,7 @@ try {
     # Hidden + redirected (NOT -NoNewWindow, which needs a console the detached
     # launcher doesn't have and would prevent Streamlit from starting).
     $ui = Start-Process -FilePath $Python `
-            -ArgumentList "-m","streamlit","run","src/app.py","--server.port",$Port,"--server.headless","true" `
+            -ArgumentList "-m","streamlit","run","src/app.py","--server.port",$Port,"--server.address","127.0.0.1","--server.headless","true" `
             -WorkingDirectory $ProjectDir -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $uiLog -RedirectStandardError "$uiLog.err"
     Add-ToJob $ui.Id
