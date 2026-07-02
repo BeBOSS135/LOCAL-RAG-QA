@@ -4,6 +4,7 @@ import streamlit as st
 import config
 import feedback
 import llm
+import lock
 import rag
 import vectorstore
 from rag import retrieve
@@ -11,6 +12,10 @@ from rag import retrieve
 st.set_page_config(page_title="RAG Q&A", layout="centered")
 st.title("RAG Question-Answering")
 st.caption("Local • bge embeddings • Chroma • bge re-ranker • OCR • Mistral 7B")
+
+# Indexer Holds the Write Lock - Reads Still Work but May See a Half-Written Index
+if lock.held():
+    st.warning(f"Indexing in progress ({lock.describe()}) — results may be incomplete until it finishes.")
 
 # Settings in the Sidebar So the Pipeline Can Be Tuned per Query
 with st.sidebar:

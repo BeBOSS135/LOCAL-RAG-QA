@@ -11,6 +11,7 @@ from pathlib import Path
 
 import config
 import embeddings
+import lock
 import retrieval
 import vectorstore
 from ingest import Chunk, list_documents
@@ -58,6 +59,17 @@ def main() -> None:
         print("No documents found. Add files under a configured source (see config.SOURCES).")
         return
 
+    # Exclusive Write Lock - a Second Indexer (or Indexing While the UI Reads) Would
+    # Race Chroma Writes; Released in the finally Below Even When Extraction Fails
+    lock.acquire()
+
+    try:
+        _run(docs, rebuild)
+    finally:
+        lock.release()
+
+
+def _run(docs: list, rebuild: bool) -> None:
     if rebuild:
         print("Full rebuild: clearing existing index")
         vectorstore.reset()
@@ -106,4 +118,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except lock.IndexLocked as e:
+        print(f"Refusing to index: {e}")
+        sys.exit(1)

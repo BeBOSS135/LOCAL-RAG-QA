@@ -4,6 +4,7 @@ import time
 
 import feedback
 import llm
+import lock
 from rag import retrieve, verify_answer
 
 
@@ -12,6 +13,10 @@ def main() -> None:
         print('Usage: python query.py "your question here"')
         return
     question = " ".join(sys.argv[1:])
+
+    # Indexer Holds the Write Lock - Reads Still Work but May See a Half-Written Index
+    if lock.held():
+        print(f"(indexing in progress — results may be incomplete: {lock.describe()})", file=sys.stderr)
 
     t0 = time.perf_counter()
     r = retrieve(question)

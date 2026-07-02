@@ -28,6 +28,8 @@ than hidden behind LangChain, so every stage is inspectable. All modules live in
 | Orchestrate | `rag.py` | `retrieve()` / `answer()`: dedup, abstention gate, scope/tag |
 | Log usage | `feedback.py` | query + 👍/👎 logs (JSONL) |
 | Evaluate | `evaluate.py` | retrieval + abstention + LLM-judge faithfulness |
+| Index lock | `lock.py` | git-style lock file — one indexer at a time, readers warned |
+| Health check | `doctor.py` | deps / CUDA / Ollama / model cache / sources / index freshness |
 
 Every stage is toggleable in `src/config.py` and per-query via `rag.retrieve(...)` /
 the Streamlit sidebar.
@@ -98,6 +100,12 @@ ollama stop mistral
 Notes:
 - **Don't run `src/index.py` while the UI is open** — both open the same Chroma DB and a
   concurrent write can clash. Stop the UI first (`taskkill /F /IM streamlit.exe`).
+  A **write lock** (`chroma_db/.index.lock`) enforces one indexer at a time and makes the
+  UI/CLI warn that results may be incomplete while indexing runs; if an indexing run
+  crashed and left the lock behind, delete that file and retry.
+- **Something not working?** Run `python src/doctor.py` — checks Python/deps/CUDA, Ollama +
+  model, the cached embedder/re-ranker revisions, source roots, and whether the index is
+  stale (files changed since last `index.py`). Exit code 1 means a check failed.
 - The UI keeps the embed/re-rank models warm; the **first** query after a fresh start
   is slower (models load into VRAM), then it's fast and the answer streams live.
 
@@ -116,6 +124,9 @@ pip install -r requirements.txt
 
 # Install Ollama from https://ollama.com/download, then:
 ollama pull mistral
+
+# Verify the whole setup:
+python src/doctor.py
 ```
 
 The model weights (bge embedder/reranker, EasyOCR) download on first run and are then
@@ -151,6 +162,17 @@ Questions live in `eval_set.json` (a generic set over `data/sample.md`); drop a 
 `eval_set.local.json` to evaluate against your own corpus instead. Answerable items carry
 `expected` source tags; an `"answerable": false` slice measures refusal on out-of-corpus
 questions. Faithfulness target: > 0.85.
+
+## Tests
+
+```powershell
+python -m pytest tests -q
+```
+
+Unit tests over the pure pipeline logic — frontmatter/tag parsing, heading ancestry,
+token windowing and section merging, source listing/exclusions, near-dup dedup, the
+two-signal abstention gate, citation building, scope-filter expansion, and the index
+lock. No model loads, no network, no index touched — the suite runs in ~2 s.
 
 ## Design notes (dataset-agnostic)
 
